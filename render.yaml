@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: cobalt-engine
+    runtime: docker
+    plan: free
+    envVars:
+      # JSON array with the single API key, e.g. ["<uuid>"].
+      # sync: false = never stored in this repo; set it manually in the
+      # Render dashboard before the first deploy.
+      # API_PORT and API_URL are NOT set here: the boot script derives
+      # them at runtime from Render's own $PORT and $RENDER_EXTERNAL_URL.
+      - key: API_KEYS_JSON
+        sync: false
