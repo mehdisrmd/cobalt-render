@@ -15,6 +15,10 @@ FROM ghcr.io/imputnet/cobalt:latest
 USER root
 RUN touch /keys.json && chown node:node /keys.json
 
+# Same treatment for the optional YouTube cookie file: cobalt rewrites it
+# in place when YouTube rotates cookies, and the process runs as node.
+RUN touch /cookies.json && chown node:node /cookies.json
+
 RUN cat > /app/render-start.sh <<'EOF'
 #!/bin/sh
 # Render boot wrapper for cobalt.
@@ -32,6 +36,15 @@ export API_PORT="${PORT:-9000}"
 export API_URL="${RENDER_EXTERNAL_URL%/}/"
 export API_KEY_URL="file:///keys.json"
 export API_AUTH_REQUIRED=1
+
+# Optional YouTube cookies: when $YT_COOKIES_JSON is set (Render dashboard
+# only, never committed), write it to the cookie file and point cobalt at
+# it. When unset or empty, no write happens and cobalt runs cookieless,
+# exactly as before.
+if [ -n "$YT_COOKIES_JSON" ]; then
+    printf '%s' "$YT_COOKIES_JSON" > /cookies.json
+    export COOKIE_PATH=/cookies.json
+fi
 
 exec node src/cobalt
 EOF
