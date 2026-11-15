@@ -59,7 +59,9 @@ Request JSON:
 | `quality` | number | video    | maximum video height in px, e.g. `720` (clamped to 144–2160; default `720`) |
 
 Format selection: audio picks the best audio-only format at or under
-`bitrate` (fallback: best audio overall); video picks the best
+`bitrate` (fallback: best audio overall), then transcodes it to a true
+MP3 at `bitrate` (FFmpegExtractAudio) — audio responses are always
+`media.mp3`; video picks the best
 video+audio pair at or under `quality` and merges to MP4 (fallback: best
 single file at or under `quality`). Downloads run through yt-dlp with
 the service's cookies and the Node EJS challenge solver.
@@ -74,7 +76,7 @@ HTTP 200
 {
   "status": "ok",
   "url": "https://cobalt-engine-w87i.onrender.com/file/<token>",
-  "filename": "media.m4a",
+  "filename": "media.mp3",
   "size": 42576033,
   "expires_in": 3600
 }

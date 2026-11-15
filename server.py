@@ -14,6 +14,11 @@ array of key strings is also accepted). Key values are never logged.
 Cookies: the boot script converts $YT_COOKIES_JSON (cobalt format) into
 /cookies.txt (Netscape); when that file exists it is passed to yt-dlp.
 Error output returned to clients is scrubbed of cookie/key values.
+
+Audio mode returns a TRUE MP3 transcoded to the requested bitrate
+(FFmpegExtractAudio, ffmpeg is in the image) — the bot's picker
+promises MP3, and YouTube's native containers (WebM/Opus, M4A) are
+not MP3. Video mode returns the merged MP4, unchanged.
 """
 
 import json
@@ -143,6 +148,15 @@ def run_download(body):
             return 400, {"status": "error", "error": "bad_bitrate"}
         bitrate = max(16, min(320, bitrate))
         cmd += ["-f", f"bestaudio[abr<={bitrate}]/bestaudio/best"]
+        # Transcode the native container to a true MP3 at the
+        # requested bitrate (the picker promises MP3). The
+        # postprocessor renames the output to media.mp3 and the
+        # native file is dropped, so `produced` below sees the MP3.
+        cmd += [
+            "--extract-audio",
+            "--audio-format", "mp3",
+            "--audio-quality", f"{bitrate}K",
+        ]
     else:
         try:
             quality = int(body.get("quality", 720))
