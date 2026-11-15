@@ -1,57 +1,38 @@
 # syntax=docker/dockerfile:1
 
-# Thin Render wrapper around the official cobalt image.
+# yt-dlp download engine for Render's free web-service tier.
 #
-# Upstream (ghcr.io/imputnet/cobalt) uses WORKDIR /app, runs as USER node,
-# exposes port 9000, and starts with CMD [ "node", "src/cobalt" ]; it
-# defines no ENTRYPOINT. This image keeps those conventions and only
-# swaps the CMD for a boot script that first adapts Render's runtime
-# environment ($PORT, $RENDER_EXTERNAL_URL, $API_KEYS_JSON) to cobalt's
-# API_* variables, then execs cobalt's normal start command.
-FROM ghcr.io/imputnet/cobalt:latest
-
-# The boot script runs as the node user and must rewrite the key file on
-# every start, so pre-create /keys.json as root and hand it to node.
-USER root
-RUN touch /keys.json && chown node:node /keys.json
-
-# Same treatment for the optional YouTube cookie file: cobalt rewrites it
-# in place when YouTube rotates cookies, and the process runs as node.
-RUN touch /cookies.json && chown node:node /cookies.json
-
-RUN cat > /app/render-start.sh <<'EOF'
-#!/bin/sh
-# Render boot wrapper for cobalt.
+# Replaces the previous cobalt wrapper: cobalt 11.7.1 cannot consume the
+# SABR-only formats YouTube now serves this account, while yt-dlp (with
+# the Node-based EJS JS-challenge solver) downloads them fine — proven in
+# a local POC (full 44-minute audio, byte-exact).
 #
-# Render injects $PORT and $RENDER_EXTERNAL_URL at runtime, while cobalt
-# is configured through its own API_* variables. This script writes the
-# API key database from the $API_KEYS_JSON env var, translates the Render
-# vars into cobalt's, turns on mandatory API key auth, and then hands
-# over to cobalt's normal start command (upstream CMD: node src/cobalt).
-set -e
+# Image contents: Python 3.12 + yt-dlp 2026.10.26 (pip-pinned), the Node
+# 24 binary (yt-dlp runs its EJS challenge solver through it), ffmpeg
+# (format merging), and a small stdlib HTTP API (server.py). The boot
+# script (render-start.sh) converts $YT_COOKIES_JSON into /cookies.txt
+# and starts the server; API keys come from $API_KEYS_JSON at runtime.
+# No secrets are ever baked into the image or committed to this repo.
 
-printf '%s' "$API_KEYS_JSON" > /keys.json
+FROM node:24-bookworm-slim AS nodebin
 
-export API_PORT="${PORT:-9000}"
-export API_URL="${RENDER_EXTERNAL_URL%/}/"
-export API_KEY_URL="file:///keys.json"
-export API_AUTH_REQUIRED=1
+FROM python:3.12-slim-bookworm
 
-# Optional YouTube cookies: when $YT_COOKIES_JSON is set (Render dashboard
-# only, never committed), write it to the cookie file and point cobalt at
-# it. When unset or empty, no write happens and cobalt runs cookieless,
-# exactly as before.
-if [ -n "$YT_COOKIES_JSON" ]; then
-    printf '%s' "$YT_COOKIES_JSON" > /cookies.json
-    export COOKIE_PATH=/cookies.json
-fi
+ENV PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    DEBIAN_FRONTEND=noninteractive
 
-exec node src/cobalt
-EOF
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 
-RUN chmod +x /app/render-start.sh
+# yt-dlp's JS challenge solver needs a standalone node binary in PATH.
+COPY --from=nodebin /usr/local/bin/node /usr/local/bin/node
 
-USER node
+RUN pip install "yt-dlp==2026.10.26" && yt-dlp --version && node --version
+
 WORKDIR /app
+COPY server.py render-start.sh ./
+RUN chmod +x render-start.sh
 
-CMD [ "/bin/sh", "/app/render-start.sh" ]
+CMD ["/app/render-start.sh"]
