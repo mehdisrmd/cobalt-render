@@ -137,6 +137,12 @@ def run_download(body):
         "--socket-timeout", "30",
         "--retries", "3",
         "--fragment-retries", "3",
+        # Live-replay (was_live) audio/video arrives as HLS. yt-dlp's
+        # default hands HLS to ffmpeg's downloader, which crawls from
+        # Render's egress and dies on googlevideo 403s after ~10 min
+        # (proven on z4TAI3Oy30U, 2026-11-15). The native fragment
+        # downloader fetches the same formats at full speed.
+        "--hls-prefer-native",
     ]
     if os.path.exists(COOKIES_PATH) and os.path.getsize(COOKIES_PATH) > 0:
         cmd += ["--cookies", COOKIES_PATH]
