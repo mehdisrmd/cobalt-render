@@ -19,6 +19,15 @@ Audio mode returns a TRUE MP3 transcoded to the requested bitrate
 (FFmpegExtractAudio, ffmpeg is in the image) — the bot's picker
 promises MP3, and YouTube's native containers (WebM/Opus, M4A) are
 not MP3. Video mode returns the merged MP4, unchanged.
+
+Audio compression-to-fit (Mehdi's instruction, 2026-11-16): when an
+audio MP3 would exceed Bale's 50 MB upload cap, it is re-encoded in
+place at a lower bitrate calculated from its exact duration, just
+enough to fit safely under the cap, so the bot can send it as a
+file instead of a download link. The response then carries
+"compressed": true, the final "bitrate", and "original_size".
+If even the minimum usable bitrate cannot fit it, the original
+file is returned unchanged and the caller falls back to the link.
 """
 
 import json
@@ -39,6 +48,12 @@ COOKIES_PATH = "/cookies.txt"
 WORK_ROOT = "/tmp/ytdlp-engine"
 FILE_TTL_SECONDS = 3600
 DOWNLOAD_TIMEOUT_SECONDS = 1200
+# Bale's upload cap for non-image files, and the target an
+# over-cap MP3 is compressed to (a safety margin under the cap
+# for container/ID3 overhead and Bale-side rounding).
+BALE_MAX_UPLOAD_BYTES = 50 * 1024 * 1024
+AUDIO_TARGET_BYTES = 49 * 1024 * 1024
+AUDIO_MIN_BITRATE_KBPS = 16
 
 os.makedirs(WORK_ROOT, exist_ok=True)
 
@@ -111,6 +126,105 @@ files = {}  # token -> {"path","filename","size","created"}
 files_lock = threading.Lock()
 
 
+def _probe_duration_seconds(path):
+    """Exact media duration in seconds via ffprobe, or None."""
+    try:
+        out = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=noprint_wrappers=1:nokey=1", path],
+            capture_output=True, text=True, timeout=60,
+        )
+        value = float((out.stdout or "").strip().splitlines()[0])
+        return value if value > 0 else None
+    except Exception:
+        return None
+
+
+# Standard MPEG-1 Layer III bitrates (kbps). libmp3lame silently
+# rounds a non-standard request DOWN to one of these (60 -> 56,
+# proven in local testing), so targets are snapped down to this
+# list up front — the reported bitrate then matches the file.
+_MP3_STANDARD_KBPS = [32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320]
+
+
+def _snap_mp3_bitrate(kbps):
+    if kbps < 32:
+        return kbps  # very long files: MPEG-2 low bitrates, as-is
+    snapped = 32
+    for std in _MP3_STANDARD_KBPS:
+        if std <= kbps:
+            snapped = std
+    return snapped
+
+
+def _reencode_mp3(src_path, dst_path, bitrate_kbps):
+    """Re-encode an audio file to MP3 at bitrate_kbps. True on success."""
+    try:
+        proc = subprocess.run(
+            ["ffmpeg", "-y", "-v", "error", "-i", src_path, "-vn",
+             "-codec:a", "libmp3lame", "-b:a", f"{bitrate_kbps}K", dst_path],
+            capture_output=True, text=True, timeout=DOWNLOAD_TIMEOUT_SECONDS,
+        )
+    except Exception:
+        return False
+    return (
+        proc.returncode == 0
+        and os.path.isfile(dst_path)
+        and os.path.getsize(dst_path) > 0
+    )
+
+
+def compress_audio_to_fit(path, requested_bitrate):
+    """Shrink an over-cap MP3 in place so it fits Bale's upload cap.
+
+    The target bitrate is computed from the file's exact duration:
+    target_bytes * 8 / duration. Up to 3 attempts, each stepping
+    the bitrate down from the previous attempt's actual size, in
+    case encoder overhead overshoots the estimate. On success the
+    original file is replaced and a dict is returned:
+    {"bitrate": final_kbps, "original_size": bytes_before,
+     "size": bytes_after}. On any failure the original file is
+    left untouched and None is returned.
+    """
+    original_size = os.path.getsize(path)
+    duration = _probe_duration_seconds(path)
+    if not duration:
+        return None
+    target_kbps = int((AUDIO_TARGET_BYTES * 8 / duration) // 1000)
+    if target_kbps >= requested_bitrate:
+        # The estimate says the requested bitrate should have fit,
+        # so the overshoot is overhead — step down a little anyway.
+        target_kbps = int(requested_bitrate * 0.92)
+    target_kbps = _snap_mp3_bitrate(target_kbps)
+    tmp_path = os.path.join(
+        os.path.dirname(path), "media_compressed.mp3"
+    )
+    for _attempt in range(3):
+        if target_kbps < AUDIO_MIN_BITRATE_KBPS:
+            return None
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+        if not _reencode_mp3(path, tmp_path, target_kbps):
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+            return None
+        new_size = os.path.getsize(tmp_path)
+        if new_size <= BALE_MAX_UPLOAD_BYTES:
+            os.replace(tmp_path, path)
+            return {
+                "bitrate": target_kbps,
+                "original_size": original_size,
+                "size": new_size,
+            }
+        # Still too big — scale the next attempt from reality.
+        os.remove(tmp_path)
+        next_kbps = int(target_kbps * (AUDIO_TARGET_BYTES / new_size) * 0.98)
+        if next_kbps >= target_kbps:
+            next_kbps = target_kbps - 8
+        target_kbps = _snap_mp3_bitrate(next_kbps)
+    return None
+
+
 def sweep_expired():
     now = time.time()
     with files_lock:
@@ -147,6 +261,7 @@ def run_download(body):
     if os.path.exists(COOKIES_PATH) and os.path.getsize(COOKIES_PATH) > 0:
         cmd += ["--cookies", COOKIES_PATH]
 
+    bitrate = None
     if mode == "audio":
         try:
             bitrate = int(str(body.get("bitrate", "128")).strip())
@@ -207,6 +322,18 @@ def run_download(body):
     path = max(produced, key=os.path.getsize)
     size = os.path.getsize(path)
     filename = os.path.basename(path)
+    extra = {}
+    if mode == "audio" and size > BALE_MAX_UPLOAD_BYTES:
+        # Over Bale's cap — compress to fit instead of leaving the
+        # bot to hand out a download link (Mehdi, 2026-11-16).
+        fitted = compress_audio_to_fit(path, bitrate or 128)
+        if fitted:
+            size = fitted["size"]
+            extra = {
+                "compressed": True,
+                "bitrate": fitted["bitrate"],
+                "original_size": fitted["original_size"],
+            }
     token = secrets.token_urlsafe(24)
     with files_lock:
         files[token] = {
@@ -221,6 +348,7 @@ def run_download(body):
         "filename": filename,
         "size": size,
         "expires_in": FILE_TTL_SECONDS,
+        **extra,
     }
 
 

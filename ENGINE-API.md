@@ -66,6 +66,16 @@ video+audio pair at or under `quality` and merges to MP4 (fallback: best
 single file at or under `quality`). Downloads run through yt-dlp with
 the service's cookies and the Node EJS challenge solver.
 
+Compression-to-fit (audio only, 2026-11-16): if the finished MP3 would
+exceed Bale's 50 MB upload cap (52,428,800 bytes), the engine re-encodes
+it in place at a lower bitrate computed from its exact duration
+(target ~49 MB, up to 3 attempts, floor 16 kbps) so the bot can send
+it as a file instead of a download link. When this happens the success
+response adds `"compressed": true`, `"bitrate": <final kbps>` and
+`"original_size": <bytes before compression>`, and `size` is the
+compressed size. If it cannot be made to fit, the original file is
+returned unchanged (still over the cap, no extra fields).
+
 Success — the response is returned only after the download has finished
 server-side, so allow a generous client timeout (a 44-minute audio took
 ~40 s of transfer once extraction succeeded; long/large videos take
