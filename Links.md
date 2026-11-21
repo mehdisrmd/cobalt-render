@@ -2,7 +2,6 @@
  Click on any link below to start downloading directly.
 
 ### 📅 2026-11-21 08:43 (IR Time)
-- 🎵 [انتقال جنگنده_ها و سوخت_رسان_های آمریکا به اسرائیل_ چرا ترامپ تعلل می_کند_.mp3](https://github.com/mehdisrmd/cobalt-render/raw/main/dl/%D8%A7%D9%86%D8%AA%D9%82%D8%A7%D9%84%20%D8%AC%D9%86%DA%AF%D9%86%D8%AF%D9%87_%D9%87%D8%A7%20%D9%88%20%D8%B3%D9%88%D8%AE%D8%AA_%D8%B1%D8%B3%D8%A7%D9%86_%D9%87%D8%A7%DB%8C%20%D8%A2%D9%85%D8%B1%DB%8C%DA%A9%D8%A7%20%D8%A8%D9%87%20%D8%A7%D8%B3%D8%B1%D8%A7%D8%A6%DB%8C%D9%84_%20%DA%86%D8%B1%D8%A7%20%D8%AA%D8%B1%D8%A7%D9%85%D9%BE%20%D8%AA%D8%B9%D9%84%D9%84%20%D9%85%DB%8C_%DA%A9%D9%86%D8%AF_.mp3) `19.54 MB`
 
 ### 📅 2026-11-20 20:23 (IR Time)
 
